@@ -113,7 +113,7 @@ defmodule Scholar.Linear.PolynomialRegression do
   deftransform predict(model, x) do
     Scholar.Linear.LinearRegression.predict(
       %{model | __struct__: Scholar.Linear.LinearRegression},
-      transform_n(x, degree: model.degree, fit_intercept?: false)
+      transform(x, degree: model.degree, fit_intercept?: false)
     )
   end
 
@@ -158,58 +158,47 @@ defmodule Scholar.Linear.PolynomialRegression do
       >
   """
   deftransform transform(x, opts \\ []) do
-    transform_n(x, NimbleOptions.validate!(opts, @transform_opts_schema))
+    opts = NimbleOptions.validate!(opts, @opts_schema)
+    transform_n(x, initial_xp(x, opts), opts)
   end
 
-  deftransform transform_n(x, opts) do
-    {_n_samples, n_features} = Nx.shape(x)
+  defn transform_n(x, xp, opts) do
+    indices = Nx.iota({Nx.shape(x) |> elem(1)})
 
-    x_split = Enum.map(0..(n_features - 1), &get_column(x, &1))
+    {_, _, _, _, xp} =
+      while {d = 1, indices, start = 0, x, xp}, d < opts[:degree] do
+        {_, indices, start, _, xp} = compute_features(indices, start, x, xp)
 
-    Enum.reduce(
-      1..(opts[:degree] - 1)//1,
-      [x_split],
-      fn _, prev_degree ->
-        [
-          prev_degree,
-          compute_degree(x, List.last(prev_degree))
-        ]
+        {d + 1, indices, start, x, xp}
       end
-    )
-    |> List.flatten()
-    |> Nx.concatenate(axis: 1)
-    |> add_intercept(opts)
+
+    xp
   end
 
-  @spec compute_degree(Nx.Tensor, list(Nx.Tensor)) :: list(Nx.Tensor)
-  deftransform compute_degree(x, previous_degree) do
-    {_n_samples, n_features} = Nx.shape(x)
+  defn compute_features(indices, start, x, xp) do
+    {n_samples, n_features} = Nx.shape(x)
+    l = Nx.size(indices)
 
-    Enum.map(0..(n_features - 1), fn nf ->
-      previous_degree
-      |> Enum.slice(nf..-1)
-      |> Nx.concatenate(axis: 1)
-      |> compute_column(x, nf)
-    end)
-  end
+    while {i = 0, indices, start, x, xp}, i < l do
+      factor_col = Nx.transpose(x)[i] |> Nx.reshape({n_samples, :auto})
 
-  defnp get_column(x, n) do
-    Nx.transpose(x)[n]
-    |> Nx.reshape({:auto, 1})
-  end
+      previous_deg_cols =
+        Nx.transpose(xp)[start]
+        |> Nx.reshape({n_samples, :auto})
 
-  defnp compute_column(previous, x, n) do
-    get_column(x, n) * previous
-  end
+      {_, new_size} = Nx.shape(previous_deg_cols)
 
-  defnp add_intercept(x, opts) do
-    if opts[:fit_intercept?] do
-      {n_samples, _n_features} = Nx.shape(x)
+      xp = Nx.put_slice(xp, [0, n_features + start], factor_col * previous_deg_cols)
 
-      [Nx.broadcast(1, {n_samples, 1}), x]
-      |> Nx.concatenate(axis: 1)
-    else
-      x
+      {i + 1, indices, start + new_size, x, xp}
     end
+  end
+
+  deftransform initial_xp(x, opts) do
+    {n_samples, _n_features} = Nx.shape(x)
+
+    :nan
+    |> Nx.broadcast({n_samples, Scholar.Metrics.comb(x, opts[:degree])})
+    |> Nx.put_slice([0, 0], x)
   end
 end

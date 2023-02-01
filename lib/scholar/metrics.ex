@@ -520,4 +520,30 @@ defmodule Scholar.Metrics do
     denominator = Nx.select(is_zero?, 1, denominator)
     nominator / denominator
   end
+
+  deftransform comb(x, degree) do
+    comb_n(x, degree)
+    |> Nx.as_type(:s64)
+    |> Nx.to_number()
+  end
+
+  defn comb_n(x, degree) do
+    {_, nf} = Nx.shape(x)
+    binom(nf + degree, degree) - 1
+  end
+
+  defnp binom(k, n) do
+    gamma(k + 1) / (gamma(n + 1) * gamma(k - n + 1))
+  end
+
+  defnp gamma(x) do
+    x = x - 1
+
+    {factorial, _} =
+      while {factorial = 1, x}, Nx.greater(x, 1) do
+        {factorial * x, x - 1}
+      end
+
+    factorial
+  end
 end
